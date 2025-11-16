@@ -11,6 +11,7 @@ import java.awt.event.KeyEvent;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.awt.image.BufferedImage;
+import java.awt.geom.AffineTransform;
 import com.echorun.sprite.*;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
@@ -59,7 +60,8 @@ public class GamePanel extends JPanel implements Runnable {
     private int mouseY = 0;
     private long lastAttackNs = 0L;
     private final List<Projectile> projectiles = new ArrayList<>();
-    private final List<SlashEffect> slashEffects = new ArrayList<>();
+    private final List<SwordSwing> slashEffects = new ArrayList<>();
+    private final List<PowerBeam> beams = new ArrayList<>();
 
     public GamePanel(PlayerClass playerClass, Runnable onExitToMenu) {
         this.playerClass = playerClass;
@@ -205,11 +207,18 @@ public class GamePanel extends JPanel implements Runnable {
             }
         }
 
-        // Atualiza efeitos de corte
-        Iterator<SlashEffect> it2 = slashEffects.iterator();
+        // Atualiza efeitos de corte (espada)
+        Iterator<SwordSwing> it2 = slashEffects.iterator();
         while (it2.hasNext()) {
-            SlashEffect s = it2.next();
+            SwordSwing s = it2.next();
             if (!s.update()) it2.remove();
+        }
+
+        // Atualiza feixes de poder
+        Iterator<PowerBeam> it3 = beams.iterator();
+        while (it3.hasNext()) {
+            PowerBeam b = it3.next();
+            if (!b.update()) it3.remove();
         }
     }
 
@@ -278,12 +287,17 @@ public class GamePanel extends JPanel implements Runnable {
             g2.drawImage(mapImage, (int) -camX, (int) -camY, null);
         }
 
-        // Efeitos de corte (no espaço do mundo)
-        for (SlashEffect s : slashEffects) {
+        // Feixes de poder (Mago)
+        for (PowerBeam b : beams) {
+            b.paint(g2, (float)(playerX - camX + playerSize/2.0), (float)(playerY - camY + playerSize/2.0));
+        }
+
+        // Efeitos de espada (Guerreiro)
+        for (SwordSwing s : slashEffects) {
             s.paint(g2, (float)(playerX - camX + playerSize/2.0), (float)(playerY - camY + playerSize/2.0));
         }
 
-        // Projéteis
+        // Projéteis (Ranger/Ladino/Clérigo)
         for (Projectile p : projectiles) {
             p.paint(g2, (int)(p.x - camX), (int)(p.y - camY));
         }
@@ -443,26 +457,27 @@ public class GamePanel extends JPanel implements Runnable {
 
         // Ajusta facing ao quadrante do mouse
         double a = Math.toDegrees(ang);
+        // Corrige mapeamento para "cima" e "baixo" conforme esperado
         if (a >= -45 && a < 45) facing = Direction.RIGHT;
-        else if (a >= 45 && a < 135) facing = Direction.DOWN;
-        else if (a >= -135 && a < -45) facing = Direction.UP;
+        else if (a >= 45 && a < 135) facing = Direction.UP;    // antes estava DOWN
+        else if (a >= -135 && a < -45) facing = Direction.DOWN; // antes estava UP
         else facing = Direction.LEFT;
 
         switch (playerClass) {
             case WARRIOR:
-                spawnSlash(ang);
+                spawnSwordSwing(ang);
                 break;
             case MAGE:
-                spawnProjectile(ang, 6.0, 180, new Color(140, 200, 255), 5);
+                spawnBeam(ang);
                 break;
             case ROGUE:
-                spawnProjectile(ang, 7.5, 160, new Color(210, 220, 220), 3);
+                spawnProjectile(ang, 7.5, 160, new Color(210, 220, 220), 3, ProjectileKind.DAGGER);
                 break;
             case RANGER:
-                spawnProjectile(ang, 7.0, 220, new Color(240, 210, 160), 4);
+                spawnProjectile(ang, 7.0, 220, new Color(240, 210, 160), 4, ProjectileKind.ARROW);
                 break;
             case CLERIC:
-                spawnProjectile(ang, 5.5, 200, new Color(255, 235, 150), 6);
+                spawnProjectile(ang, 5.5, 200, new Color(255, 235, 150), 6, ProjectileKind.ORB);
                 break;
         }
     }
@@ -487,29 +502,37 @@ public class GamePanel extends JPanel implements Runnable {
         return map.get(tx, ty) == Tile.WALL;
     }
 
-    private void spawnProjectile(double ang, double speed, int lifeFrames, Color color, int radius) {
+    private void spawnProjectile(double ang, double speed, int lifeFrames, Color color, int radius, ProjectileKind kind) {
         double px = playerX + playerSize/2.0;
         double py = playerY + playerSize/2.0;
         double vx = Math.cos(ang) * speed;
         double vy = Math.sin(ang) * speed;
-        projectiles.add(new Projectile(px, py, vx, vy, lifeFrames, color, radius));
+        projectiles.add(new Projectile(px, py, vx, vy, lifeFrames, color, radius, ang, kind));
     }
 
-    private void spawnSlash(double ang) {
-        SlashEffect s = new SlashEffect(ang, 14, tileSize * 1.2f);
+    private void spawnSwordSwing(double ang) {
+        SwordSwing s = new SwordSwing(ang, 14, playerSize * 1.6f);
         slashEffects.add(s);
     }
 
+    private void spawnBeam(double ang) {
+        beams.add(new PowerBeam(ang, 10)); // rajada curta e intensa
+    }
+
     // ========= Tipos auxiliares =========
+    private enum ProjectileKind { ARROW, DAGGER, ORB }
+
     private static class Projectile {
         double x, y, vx, vy;
         int life;
         boolean dead = false;
         final Color color;
         final int radius;
+        final double ang;
+        final ProjectileKind kind;
 
-        Projectile(double x, double y, double vx, double vy, int lifeFrames, Color color, int radius) {
-            this.x = x; this.y = y; this.vx = vx; this.vy = vy; this.life = lifeFrames; this.color = color; this.radius = radius;
+        Projectile(double x, double y, double vx, double vy, int lifeFrames, Color color, int radius, double ang, ProjectileKind kind) {
+            this.x = x; this.y = y; this.vx = vx; this.vy = vy; this.life = lifeFrames; this.color = color; this.radius = radius; this.ang = ang; this.kind = kind;
         }
 
         void update() {
@@ -518,29 +541,122 @@ public class GamePanel extends JPanel implements Runnable {
         }
 
         void paint(Graphics2D g2, int sx, int sy) {
-            g2.setColor(new Color(color.getRed(), color.getGreen(), color.getBlue(), 220));
-            g2.fillOval(sx - radius, sy - radius, radius*2, radius*2);
+            switch (kind) {
+                case ARROW: {
+                    AffineTransform old = g2.getTransform();
+                    g2.translate(sx, sy);
+                    g2.rotate(ang);
+                    // haste
+                    g2.setColor(new Color(130, 100, 70));
+                    g2.fillRect(-radius, -2, radius*2, 4);
+                    // ponta
+                    g2.setColor(new Color(200, 200, 210));
+                    int tip = radius*2;
+                    g2.fillPolygon(new int[]{tip, tip-6, tip-6}, new int[]{0, -4, 4}, 3);
+                    // penas
+                    g2.setColor(new Color(160, 160, 180));
+                    g2.fillPolygon(new int[]{-radius, -radius-6, -radius-4}, new int[]{0, -4, 4}, 3);
+                    g2.setTransform(old);
+                    break;
+                }
+                case DAGGER: {
+                    AffineTransform old = g2.getTransform();
+                    g2.translate(sx, sy);
+                    g2.rotate(ang);
+                    // lâmina
+                    g2.setColor(new Color(220, 230, 235));
+                    g2.fillPolygon(new int[]{0, radius*2, 0}, new int[]{-3, 0, 3}, 3);
+                    // cabo
+                    g2.setColor(new Color(120, 80, 50));
+                    g2.fillRect(-6, -2, 6, 4);
+                    g2.setTransform(old);
+                    break;
+                }
+                case ORB: {
+                    g2.setColor(new Color(color.getRed(), color.getGreen(), color.getBlue(), 220));
+                    g2.fillOval(sx - radius, sy - radius, radius*2, radius*2);
+                    g2.setColor(new Color(color.getRed(), color.getGreen(), color.getBlue(), 140));
+                    g2.drawOval(sx - radius - 2, sy - radius - 2, radius*2 + 4, radius*2 + 4);
+                    break;
+                }
+            }
         }
     }
 
-    private static class SlashEffect {
-        final double ang;
+    private static class SwordSwing {
+        final double baseAng;
+        final int lifeMax;
         int life;
-        final float radius;
+        final float reach;
 
-        SlashEffect(double ang, int lifeFrames, float radius) {
-            this.ang = ang; this.life = lifeFrames; this.radius = radius;
+        SwordSwing(double ang, int lifeFrames, float reach) {
+            this.baseAng = ang; this.lifeMax = lifeFrames; this.life = lifeFrames; this.reach = reach;
         }
 
         boolean update() { return --life > 0; }
 
         void paint(Graphics2D g2, float cx, float cy) {
-            Stroke old = g2.getStroke();
-            g2.setStroke(new BasicStroke(6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-            g2.setColor(new Color(255, 255, 255, 120));
-            float a0 = (float)Math.toDegrees(ang) - 30f;
-            g2.drawArc((int)(cx - radius), (int)(cy - radius), (int)(radius*2), (int)(radius*2), (int)a0, 60);
-            g2.setStroke(old);
+            double progress = 1.0 - (life / (double)lifeMax);
+            double sweep = Math.toRadians(120); // arco amplo
+            double angle = baseAng - sweep/2 + sweep * progress;
+
+            AffineTransform old = g2.getTransform();
+            g2.translate(cx, cy);
+            g2.rotate(angle);
+
+            // cabo
+            g2.setColor(new Color(120, 80, 50));
+            g2.fillRoundRect(4, -3, 10, 6, 4, 4);
+            // guarda-mão
+            g2.setColor(new Color(150, 110, 70));
+            g2.fillRect(12, -5, 3, 10);
+            // lâmina
+            g2.setColor(new Color(210, 220, 230));
+            g2.fillRoundRect(15, -2, (int)(reach), 4, 3, 3);
+
+            g2.setTransform(old);
+        }
+    }
+
+    private class PowerBeam {
+        final double ang;
+        int life;
+        final int lifeMax;
+        double maxLen;
+
+        PowerBeam(double ang, int lifeFrames) {
+            this.ang = ang; this.life = lifeFrames; this.lifeMax = lifeFrames;
+            this.maxLen = computeLength();
+        }
+
+        boolean update() { return --life > 0; }
+
+        private double computeLength() {
+            // Avança até parede ou limite
+            double px = playerX + playerSize/2.0;
+            double py = playerY + playerSize/2.0;
+            double step = 6.0;
+            double len = 0.0; double maxL = tileSize * 10.0; // alcance
+            while (len < maxL) {
+                double x = px + Math.cos(ang) * len;
+                double y = py + Math.sin(ang) * len;
+                if (hitsWall(x, y)) break;
+                len += step;
+            }
+            return len;
+        }
+
+        void paint(Graphics2D g2, float cx, float cy) {
+            float alpha = (float)(life / (double)lifeMax);
+            AffineTransform old = g2.getTransform();
+            g2.translate(cx, cy);
+            g2.rotate(ang);
+            // feixe com núcleo e brilho
+            g2.setColor(new Color(140, 200, 255, (int)(220 * alpha)));
+            g2.fillRect(0, -3, (int)maxLen, 6);
+            g2.setColor(new Color(200, 230, 255, (int)(120 * alpha)));
+            g2.fillRect(0, -6, (int)maxLen, 12);
+            g2.setTransform(old);
         }
     }
 }

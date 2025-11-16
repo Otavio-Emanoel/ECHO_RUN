@@ -8,6 +8,9 @@ import javax.swing.*;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
+import java.awt.image.BufferedImage;
 
 public class GamePanel extends JPanel implements Runnable {
     private final PlayerClass playerClass;
@@ -35,6 +38,10 @@ public class GamePanel extends JPanel implements Runnable {
     private final Color bgColor = new Color(12, 12, 16);
     private final Color playerColor = new Color(80, 200, 160);
 
+    // Render buffers
+    private BufferedImage mapImage;        // pré-render do mapa (mundo inteiro)
+    private BufferedImage vignetteImage;   // vinheta do tamanho do painel
+
     public GamePanel(PlayerClass playerClass, Runnable onExitToMenu) {
         this.playerClass = playerClass;
         this.onExitToMenu = onExitToMenu;
@@ -45,8 +52,17 @@ public class GamePanel extends JPanel implements Runnable {
         setDoubleBuffered(true);
 
         generateMap();
+        buildMapImage();
         spawnPlayer();
         setupKeyBindings();
+
+        // Recria vinheta ao redimensionar (para evitar custo por frame)
+        addComponentListener(new ComponentAdapter() {
+            @Override
+            public void componentResized(ComponentEvent e) {
+                rebuildVignette();
+            }
+        });
     }
 
     private void setupKeyBindings() {
@@ -116,15 +132,20 @@ public class GamePanel extends JPanel implements Runnable {
     @Override
     public void run() {
         final int fps = 60;
-        final long frameTime = 1000L / fps; // ms
+        final long frameTimeMs = 1000L / fps;
         while (running) {
-            long start = System.currentTimeMillis();
+            long start = System.nanoTime();
+
             updateGame();
             repaint();
-            long elapsed = System.currentTimeMillis() - start;
-            long sleep = frameTime - elapsed;
-            if (sleep < 2) sleep = 2;
-            try { Thread.sleep(sleep); } catch (InterruptedException ignored) {}
+
+            long elapsedMs = (System.nanoTime() - start) / 1_000_000L;
+            long sleep = frameTimeMs - elapsedMs;
+            if (sleep > 1) {
+                try { Thread.sleep(sleep); } catch (InterruptedException ignored) {}
+            } else {
+                Thread.yield();
+            }
         }
     }
 
@@ -207,11 +228,10 @@ public class GamePanel extends JPanel implements Runnable {
         g2.setColor(getBackground());
         g2.fillRect(0, 0, getWidth(), getHeight());
 
-        // Translate pela câmera
-        g2.translate(-camX, -camY);
-
-        // Render mapa com variações de cor e bordas
-        drawMap(g2);
+        // Desenha pré-render do mapa
+        if (mapImage != null) {
+            g2.drawImage(mapImage, (int) -camX, (int) -camY, null);
+        }
 
         // Jogador
         g2.setColor(playerColor);
@@ -227,13 +247,20 @@ public class GamePanel extends JPanel implements Runnable {
                 playerClass.getDisplayName(), hp, playerClass.getMoveSpeed(), playerClass.getAttackDamage());
         g2.drawString(hud, 12, 20);
 
-        // Vinheta sutil
+        // Vinheta sutil (pré-gerada)
         drawVignette(g2);
 
         g2.dispose();
     }
 
-    private void drawMap(Graphics2D g2) {
+    private void buildMapImage() {
+        int worldW = map.getWidth() * tileSize;
+        int worldH = map.getHeight() * tileSize;
+        mapImage = new BufferedImage(worldW, worldH, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g2 = mapImage.createGraphics();
+        // Anti-alias não é necessário para tiles retangulares; prioriza performance
+        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
+
         int w = map.getWidth();
         int h = map.getHeight();
         Color wall = new Color(45, 49, 66);
@@ -241,6 +268,7 @@ public class GamePanel extends JPanel implements Runnable {
         Color floorBase = new Color(62, 68, 89);
         Color floorAlt = new Color(66, 72, 95);
         Color doorColor = new Color(120, 98, 70);
+        Color pebble = new Color(50, 55, 72);
 
         for (int ty = 0; ty < h; ty++) {
             for (int tx = 0; tx < w; tx++) {
@@ -256,7 +284,7 @@ public class GamePanel extends JPanel implements Runnable {
                         g2.fillRect(px, py, tileSize, tileSize);
 
                         // detalhes de pedras
-                        g2.setColor(new Color(50, 55, 72));
+                        g2.setColor(pebble);
                         if (r > 0.85f) g2.fillRect(px + 4, py + 6, 2, 2);
                         if (r < 0.15f) g2.fillRect(px + 12, py + 12, 2, 2);
                         break;
@@ -281,6 +309,8 @@ public class GamePanel extends JPanel implements Runnable {
                 }
             }
         }
+
+        g2.dispose();
     }
 
     private Color mix(Color a, Color b, float t) {
@@ -292,16 +322,30 @@ public class GamePanel extends JPanel implements Runnable {
     }
 
     private void drawVignette(Graphics2D g2) {
-        int w = getWidth();
-        int h = getHeight();
-        Paint old = g2.getPaint();
+        if (vignetteImage == null || vignetteImage.getWidth() != getWidth() || vignetteImage.getHeight() != getHeight()) {
+            rebuildVignette();
+        }
+        if (vignetteImage != null) {
+            g2.drawImage(vignetteImage, 0, 0, null);
+        }
+    }
+
+    private void rebuildVignette() {
+        int w = Math.max(1, getWidth());
+        int h = Math.max(1, getHeight());
+        BufferedImage img = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = img.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        Paint old = g.getPaint();
         RadialGradientPaint rg = new RadialGradientPaint(
                 new Point(w/2, h/2), Math.max(w, h) * 0.7f,
                 new float[]{0f, 1f},
                 new Color[]{new Color(0,0,0,0), new Color(0, 0, 0, 110)}
         );
-        g2.setPaint(rg);
-        g2.fillRect(0, 0, w, h);
-        g2.setPaint(old);
+        g.setPaint(rg);
+        g.fillRect(0, 0, w, h);
+        g.setPaint(old);
+        g.dispose();
+        vignetteImage = img;
     }
 }

@@ -237,9 +237,6 @@ public class GamePanel extends JPanel implements Runnable {
         g2.setColor(playerColor);
         g2.fillRoundRect((int) (playerX - camX), (int) (playerY - camY), playerSize, playerSize, 8, 8);
 
-        // Undo translate
-        g2.translate(camX, camY);
-
         // HUD
         g2.setColor(new Color(230, 230, 235));
         g2.setFont(getFont().deriveFont(Font.BOLD, 14f));

@@ -11,6 +11,7 @@ import java.awt.event.KeyEvent;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.awt.image.BufferedImage;
+import com.echorun.sprite.*;
 
 public class GamePanel extends JPanel implements Runnable {
     private final PlayerClass playerClass;
@@ -35,6 +36,11 @@ public class GamePanel extends JPanel implements Runnable {
     private double camX = 0;
     private double camY = 0;
 
+    // Sprite e direção
+    private CharacterSprite sprite;
+    private Direction facing = Direction.DOWN;
+    private double animTime = 0.0;
+
     private final Color bgColor = new Color(12, 12, 16);
     private final Color playerColor = new Color(80, 200, 160);
 
@@ -51,6 +57,7 @@ public class GamePanel extends JPanel implements Runnable {
         setBackground(bgColor);
         setDoubleBuffered(true);
 
+        sprite = Sprites.forClass(playerClass);
         generateMap();
         buildMapImage();
         spawnPlayer();
@@ -151,6 +158,13 @@ public class GamePanel extends JPanel implements Runnable {
 
     private void updateGame() {
         // Movimento com colisão por tiles (separado por eixo)
+        // Atualiza direção e animação
+        if (velX > 0) facing = Direction.RIGHT;
+        else if (velX < 0) facing = Direction.LEFT;
+        else if (velY > 0) facing = Direction.DOWN;
+        else if (velY < 0) facing = Direction.UP;
+        animTime += 1.0/60.0;
+
         double nextX = playerX + velX;
         if (!collides(nextX, playerY)) playerX = nextX;
 
@@ -233,9 +247,10 @@ public class GamePanel extends JPanel implements Runnable {
             g2.drawImage(mapImage, (int) -camX, (int) -camY, null);
         }
 
-        // Jogador (aplicando offset da câmera para mantê-lo visível/centralizado)
-        g2.setColor(playerColor);
-        g2.fillRoundRect((int) (playerX - camX), (int) (playerY - camY), playerSize, playerSize, 8, 8);
+        // Jogador com sprite
+        if (sprite != null) {
+            sprite.paint(g2, (int)(playerX - camX), (int)(playerY - camY), playerSize, facing, animTime);
+        }
 
         // HUD
         g2.setColor(new Color(230, 230, 235));

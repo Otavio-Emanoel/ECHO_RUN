@@ -33,6 +33,10 @@ src/
 					EchoRun.java          # Janela principal + toggle de Tela Cheia
 				echorun/ui/
 					MainMenuPanel.java    # Tela inicial com "Jogar" e "Configurações"
+					CharacterSelectPanel.java # Seleção de classe (5 opções)
+				echorun/game/
+					PlayerClass.java      # Enum com classes do jogador e atributos
+					GamePanel.java        # Painel do jogo com loop simples (Java2D)
 scripts/
 	run.sh                        # Compila e executa
 	clean.sh                      # Limpa a pasta out/
@@ -44,3 +48,9 @@ Próximos passos (sugestões)
 - Criar painel real de configurações (áudio, vídeo, controles).
 - Adicionar assets (sprites, fontes) e sistema de recursos.
 - Estruturar estados (menu, jogo, pausa) e roteamento de telas.
+
+Como jogar (agora)
+- Menu: clique em "Jogar" para ir à seleção de classes.
+- Seleção: escolha uma entre 5 classes (Guerreiro, Mago, Ladino, Arqueiro, Clérigo).
+- Jogo: movimentação com `WASD`; `ESC` retorna ao menu.
+- Tela Cheia: botão no canto superior direito (alternar a qualquer momento).

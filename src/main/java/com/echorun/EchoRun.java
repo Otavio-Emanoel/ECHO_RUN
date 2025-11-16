@@ -1,5 +1,8 @@
 package com.echorun;
 
+import com.echorun.game.GamePanel;
+import com.echorun.game.PlayerClass;
+import com.echorun.ui.CharacterSelectPanel;
 import com.echorun.ui.MainMenuPanel;
 
 import javax.swing.*;
@@ -14,6 +17,8 @@ public class EchoRun {
     private boolean isFullscreen = false;
     private Dimension windowedSize;
     private Point windowedLocation;
+
+    private JComponent centerContent; // painel central atual
 
     public static void main(String[] args) {
         SwingUtilities.invokeLater(EchoRun::new);
@@ -48,14 +53,14 @@ public class EchoRun {
         fullscreenToggle.addActionListener(e -> toggleFullscreen(fullscreenToggle.isSelected()));
         topBar.add(fullscreenToggle);
 
-        // Main content
+        // Main menu
         MainMenuPanel menu = new MainMenuPanel(
-                () -> onPlay(),
-                () -> onOpenSettings()
+                this::goToCharacterSelect,
+                this::onOpenSettings
         );
 
         frame.add(topBar, BorderLayout.NORTH);
-        frame.add(menu, BorderLayout.CENTER);
+        setCenterContent(menu);
 
         frame.addWindowListener(new WindowAdapter() {
             @Override
@@ -67,14 +72,44 @@ public class EchoRun {
         frame.setVisible(true);
     }
 
-    private void onPlay() {
-        JOptionPane.showMessageDialog(frame, "Iniciar jogo em breve!", "Jogar", JOptionPane.INFORMATION_MESSAGE);
-        // TODO: trocar para a cena do jogo quando implementado.
+    private void setCenterContent(JComponent content) {
+        if (centerContent != null) {
+            // Se for GamePanel, parar o loop antes de remover
+            if (centerContent instanceof GamePanel) {
+                ((GamePanel) centerContent).stopLoop();
+            }
+            frame.remove(centerContent);
+        }
+        centerContent = content;
+        frame.add(centerContent, BorderLayout.CENTER);
+        frame.revalidate();
+        frame.repaint();
+        centerContent.requestFocusInWindow();
+    }
+
+    private void goToMainMenu() {
+        MainMenuPanel menu = new MainMenuPanel(
+                this::goToCharacterSelect,
+                this::onOpenSettings
+        );
+        setCenterContent(menu);
+    }
+
+    private void goToCharacterSelect() {
+        CharacterSelectPanel selectPanel = new CharacterSelectPanel(
+                this::startGameWithClass,
+                this::goToMainMenu
+        );
+        setCenterContent(selectPanel);
+    }
+
+    private void startGameWithClass(PlayerClass playerClass) {
+        GamePanel game = new GamePanel(playerClass, this::goToMainMenu);
+        setCenterContent(game);
     }
 
     private void onOpenSettings() {
         JOptionPane.showMessageDialog(frame, "Tela de Configurações em breve!", "Configurações", JOptionPane.INFORMATION_MESSAGE);
-        // TODO: abrir painel de configurações real quando implementado.
     }
 
     private void toggleFullscreen(boolean enable) {

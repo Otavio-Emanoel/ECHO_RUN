@@ -12,6 +12,12 @@ import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.awt.image.BufferedImage;
 import com.echorun.sprite.*;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.awt.event.MouseMotionAdapter;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
 
 public class GamePanel extends JPanel implements Runnable {
     private final PlayerClass playerClass;
@@ -48,6 +54,13 @@ public class GamePanel extends JPanel implements Runnable {
     private BufferedImage mapImage;        // pré-render do mapa (mundo inteiro)
     private BufferedImage vignetteImage;   // vinheta do tamanho do painel
 
+    // Mouse e ataque
+    private int mouseX = 0;
+    private int mouseY = 0;
+    private long lastAttackNs = 0L;
+    private final List<Projectile> projectiles = new ArrayList<>();
+    private final List<SlashEffect> slashEffects = new ArrayList<>();
+
     public GamePanel(PlayerClass playerClass, Runnable onExitToMenu) {
         this.playerClass = playerClass;
         this.onExitToMenu = onExitToMenu;
@@ -62,6 +75,7 @@ public class GamePanel extends JPanel implements Runnable {
         buildMapImage();
         spawnPlayer();
         setupKeyBindings();
+        setupMouseInput();
 
         // Recria vinheta ao redimensionar (para evitar custo por frame)
         addComponentListener(new ComponentAdapter() {
@@ -158,7 +172,7 @@ public class GamePanel extends JPanel implements Runnable {
 
     private void updateGame() {
         // Movimento com colisão por tiles (separado por eixo)
-        // Atualiza direção e animação
+        // Atualiza direção e animação com base no movimento (padrão)
         if (velX > 0) facing = Direction.RIGHT;
         else if (velX < 0) facing = Direction.LEFT;
         else if (velY > 0) facing = Direction.DOWN;
@@ -180,6 +194,23 @@ public class GamePanel extends JPanel implements Runnable {
         int worldH = map.getHeight() * tileSize;
         camX = Math.max(0, Math.min(worldW - getWidth(), camX));
         camY = Math.max(0, Math.min(worldH - getHeight(), camY));
+
+        // Atualiza projéteis
+        Iterator<Projectile> it = projectiles.iterator();
+        while (it.hasNext()) {
+            Projectile p = it.next();
+            p.update();
+            if (p.dead || hitsWall(p.x, p.y)) {
+                it.remove();
+            }
+        }
+
+        // Atualiza efeitos de corte
+        Iterator<SlashEffect> it2 = slashEffects.iterator();
+        while (it2.hasNext()) {
+            SlashEffect s = it2.next();
+            if (!s.update()) it2.remove();
+        }
     }
 
     private boolean collides(double x, double y) {
@@ -245,6 +276,16 @@ public class GamePanel extends JPanel implements Runnable {
         // Desenha pré-render do mapa
         if (mapImage != null) {
             g2.drawImage(mapImage, (int) -camX, (int) -camY, null);
+        }
+
+        // Efeitos de corte (no espaço do mundo)
+        for (SlashEffect s : slashEffects) {
+            s.paint(g2, (float)(playerX - camX + playerSize/2.0), (float)(playerY - camY + playerSize/2.0));
+        }
+
+        // Projéteis
+        for (Projectile p : projectiles) {
+            p.paint(g2, (int)(p.x - camX), (int)(p.y - camY));
         }
 
         // Jogador com sprite
@@ -359,5 +400,147 @@ public class GamePanel extends JPanel implements Runnable {
         g.setPaint(old);
         g.dispose();
         vignetteImage = img;
+    }
+
+    // ========= Mouse e ataque =========
+    private void setupMouseInput() {
+        addMouseMotionListener(new MouseMotionAdapter() {
+            @Override
+            public void mouseMoved(MouseEvent e) {
+                mouseX = e.getX();
+                mouseY = e.getY();
+            }
+
+            @Override
+            public void mouseDragged(MouseEvent e) {
+                mouseMoved(e);
+            }
+        });
+
+        addMouseListener(new MouseAdapter() {
+            @Override
+            public void mousePressed(MouseEvent e) {
+                if (SwingUtilities.isLeftMouseButton(e)) {
+                    mouseX = e.getX();
+                    mouseY = e.getY();
+                    tryAttack();
+                }
+            }
+        });
+    }
+
+    private void tryAttack() {
+        long now = System.nanoTime();
+        long cd = attackCooldownNanos();
+        if (now - lastAttackNs < cd) return;
+        lastAttackNs = now;
+
+        double px = playerX + playerSize/2.0;
+        double py = playerY + playerSize/2.0;
+        double mx = camX + mouseX;
+        double my = camY + mouseY;
+        double ang = Math.atan2(my - py, mx - px);
+
+        // Ajusta facing ao quadrante do mouse
+        double a = Math.toDegrees(ang);
+        if (a >= -45 && a < 45) facing = Direction.RIGHT;
+        else if (a >= 45 && a < 135) facing = Direction.DOWN;
+        else if (a >= -135 && a < -45) facing = Direction.UP;
+        else facing = Direction.LEFT;
+
+        switch (playerClass) {
+            case WARRIOR:
+                spawnSlash(ang);
+                break;
+            case MAGE:
+                spawnProjectile(ang, 6.0, 180, new Color(140, 200, 255), 5);
+                break;
+            case ROGUE:
+                spawnProjectile(ang, 7.5, 160, new Color(210, 220, 220), 3);
+                break;
+            case RANGER:
+                spawnProjectile(ang, 7.0, 220, new Color(240, 210, 160), 4);
+                break;
+            case CLERIC:
+                spawnProjectile(ang, 5.5, 200, new Color(255, 235, 150), 6);
+                break;
+        }
+    }
+
+    private long attackCooldownNanos() {
+        long ms;
+        switch (playerClass) {
+            case WARRIOR: ms = 400; break;
+            case MAGE: ms = 600; break;
+            case ROGUE: ms = 250; break;
+            case RANGER: ms = 500; break;
+            case CLERIC: ms = 700; break;
+            default: ms = 500; break;
+        }
+        return ms * 1_000_000L;
+    }
+
+    private boolean hitsWall(double x, double y) {
+        int tx = (int)Math.floor(x / tileSize);
+        int ty = (int)Math.floor(y / tileSize);
+        if (tx < 0 || ty < 0 || tx >= map.getWidth() || ty >= map.getHeight()) return true;
+        return map.get(tx, ty) == Tile.WALL;
+    }
+
+    private void spawnProjectile(double ang, double speed, int lifeFrames, Color color, int radius) {
+        double px = playerX + playerSize/2.0;
+        double py = playerY + playerSize/2.0;
+        double vx = Math.cos(ang) * speed;
+        double vy = Math.sin(ang) * speed;
+        projectiles.add(new Projectile(px, py, vx, vy, lifeFrames, color, radius));
+    }
+
+    private void spawnSlash(double ang) {
+        SlashEffect s = new SlashEffect(ang, 14, tileSize * 1.2f);
+        slashEffects.add(s);
+    }
+
+    // ========= Tipos auxiliares =========
+    private static class Projectile {
+        double x, y, vx, vy;
+        int life;
+        boolean dead = false;
+        final Color color;
+        final int radius;
+
+        Projectile(double x, double y, double vx, double vy, int lifeFrames, Color color, int radius) {
+            this.x = x; this.y = y; this.vx = vx; this.vy = vy; this.life = lifeFrames; this.color = color; this.radius = radius;
+        }
+
+        void update() {
+            x += vx; y += vy;
+            if (--life <= 0) dead = true;
+        }
+
+        void paint(Graphics2D g2, int sx, int sy) {
+            g2.setColor(new Color(color.getRed(), color.getGreen(), color.getBlue(), 220));
+            g2.fillOval(sx - radius, sy - radius, radius*2, radius*2);
+        }
+    }
+
+    private static class SlashEffect {
+        final double ang;
+        int life;
+        final float radius;
+
+        SlashEffect(double ang, int lifeFrames, float radius) {
+            this.ang = ang; this.life = lifeFrames; this.radius = radius;
+        }
+
+        boolean update() { return --life > 0; }
+
+        void paint(Graphics2D g2, float cx, float cy) {
+            Stroke old = g2.getStroke();
+            g2.setStroke(new BasicStroke(6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g2.setColor(new Color(255, 255, 255, 120));
+            float a0 = (float)Math.toDegrees(ang) - 30f;
+            g2.drawArc((int)(cx - radius), (int)(cy - radius), (int)(radius*2), (int)(radius*2), (int)a0, 60);
+            g2.setStroke(old);
+        }
     }
 }

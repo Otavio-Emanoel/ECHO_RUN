@@ -62,6 +62,8 @@ public class GamePanel extends JPanel implements Runnable {
     private final List<Projectile> projectiles = new ArrayList<>();
     private final List<SwordSwing> slashEffects = new ArrayList<>();
     private final List<PowerBeam> beams = new ArrayList<>();
+    private final List<Particle> particles = new ArrayList<>();
+    private final List<Impact> impacts = new ArrayList<>();
 
     public GamePanel(PlayerClass playerClass, Runnable onExitToMenu) {
         this.playerClass = playerClass;
@@ -197,12 +199,19 @@ public class GamePanel extends JPanel implements Runnable {
         camX = Math.max(0, Math.min(worldW - getWidth(), camX));
         camY = Math.max(0, Math.min(worldH - getHeight(), camY));
 
-        // Atualiza projéteis
+        // Atualiza projéteis (com trilha e impacto)
         Iterator<Projectile> it = projectiles.iterator();
         while (it.hasNext()) {
             Projectile p = it.next();
             p.update();
-            if (p.dead || hitsWall(p.x, p.y)) {
+            // trilha
+            spawnTrail(p);
+            // colisão com parede
+            if (hitsWall(p.x, p.y)) {
+                spawnImpact(p.x, p.y, p.kind, p.color);
+                p.dead = true;
+            }
+            if (p.dead) {
                 it.remove();
             }
         }
@@ -219,6 +228,20 @@ public class GamePanel extends JPanel implements Runnable {
         while (it3.hasNext()) {
             PowerBeam b = it3.next();
             if (!b.update()) it3.remove();
+        }
+        // Atualiza partículas
+        Iterator<Particle> ip = particles.iterator();
+        while (ip.hasNext()) {
+            Particle pr = ip.next();
+            pr.update();
+            if (pr.dead) ip.remove();
+        }
+
+        // Atualiza impactos
+        Iterator<Impact> ii = impacts.iterator();
+        while (ii.hasNext()) {
+            Impact im = ii.next();
+            if (!im.update()) ii.remove();
         }
     }
 
@@ -295,6 +318,16 @@ public class GamePanel extends JPanel implements Runnable {
         // Efeitos de espada (Guerreiro)
         for (SwordSwing s : slashEffects) {
             s.paint(g2, (float)(playerX - camX + playerSize/2.0), (float)(playerY - camY + playerSize/2.0));
+        }
+
+        // Partículas de trilha
+        for (Particle pr : particles) {
+             pr.paint(g2, (int)(pr.x - camX), (int)(pr.y - camY));
+        }
+
+        // Impactos
+        for (Impact im : impacts) {
+            im.paint(g2, (int)(im.x - camX), (int)(im.y - camY));
         }
 
         // Projéteis (Ranger/Ladino/Clérigo)
@@ -580,6 +613,90 @@ public class GamePanel extends JPanel implements Runnable {
                     break;
                 }
             }
+        }
+    }
+
+    // ===== Partículas de trilha e impacto =====
+    private static class Particle {
+        double x, y, vx, vy;
+        float size;
+        int life, lifeMax;
+        Color color;
+        boolean dead = false;
+
+        Particle(double x, double y, double vx, double vy, float size, int life) {
+            this.x = x; this.y = y; this.vx = vx; this.vy = vy; this.size = size; this.life = life; this.lifeMax = life; this.color = new Color(220,220,230);
+        }
+
+        Particle colorize(Color c) { this.color = c; return this; }
+
+        void update() {
+            x += vx; y += vy;
+            vy *= 0.98; vx *= 0.98;
+            size *= 0.98f;
+            if (--life <= 0 || size < 0.5f) dead = true;
+        }
+
+        void paint(Graphics2D g2, int sx, int sy) {
+            int alpha = (int)(180 * (life / (float)Math.max(1, lifeMax)));
+            alpha = Math.max(0, Math.min(200, alpha));
+            g2.setColor(new Color(color.getRed(), color.getGreen(), color.getBlue(), alpha));
+            int s = Math.max(1, (int)Math.ceil(size));
+            g2.fillOval(sx - s/2, sy - s/2, s, s);
+        }
+    }
+
+    private static class Impact {
+        final double x, y;
+        int life;
+        final int lifeMax;
+        final Color color;
+
+        Impact(double x, double y, int lifeFrames, Color color) {
+            this.x = x; this.y = y; this.life = lifeFrames; this.lifeMax = lifeFrames; this.color = color;
+        }
+
+        boolean update() { return --life > 0; }
+
+        void paint(Graphics2D g2, int sx, int sy) {
+            float t = (float)(1.0 - life / (double)lifeMax);
+            int r = (int)(6 + 22 * t);
+            int alpha = (int)(180 * (1 - t));
+            alpha = Math.max(0, Math.min(200, alpha));
+            Stroke old = g2.getStroke();
+            g2.setColor(new Color(color.getRed(), color.getGreen(), color.getBlue(), alpha));
+            g2.setStroke(new BasicStroke(2f));
+            g2.drawOval(sx - r, sy - r, r*2, r*2);
+            g2.setStroke(old);
+        }
+    }
+
+    private void spawnTrail(Projectile p) {
+        // Partícula pequena com cor ajustada por tipo
+        Color c = p.color;
+        float size = 3f;
+        switch (p.kind) {
+            case ARROW: c = new Color(200, 200, 210); size = 2.5f; break;
+            case DAGGER: c = new Color(220, 230, 235); size = 2.2f; break;
+            case ORB: c = new Color(c.getRed(), c.getGreen(), c.getBlue()); size = 3.2f; break;
+        }
+        // spawn atrás do projétil
+        double tx = p.x - p.vx * 0.4;
+        double ty = p.y - p.vy * 0.4;
+        Particle pr = new Particle(tx, ty, -p.vx*0.05, -p.vy*0.05, size, 16).colorize(c);
+        if (particles.size() < 2000) particles.add(pr);
+    }
+
+    private void spawnImpact(double x, double y, ProjectileKind kind, Color base) {
+        // anel
+        impacts.add(new Impact(x, y, 14, base));
+        // estilhaços
+        int shards = 6;
+        for (int i = 0; i < shards; i++) {
+            double ang = (Math.PI * 2.0 / shards) * i;
+            double sp = 2.0 + Math.random() * 2.5;
+            Particle pr = new Particle(x, y, Math.cos(ang)*sp, Math.sin(ang)*sp, 2.8f, 18).colorize(base);
+            if (particles.size() < 2000) particles.add(pr);
         }
     }
 

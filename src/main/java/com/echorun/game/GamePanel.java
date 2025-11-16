@@ -233,9 +233,9 @@ public class GamePanel extends JPanel implements Runnable {
             g2.drawImage(mapImage, (int) -camX, (int) -camY, null);
         }
 
-        // Jogador
+        // Jogador (aplicando offset da câmera para mantê-lo visível/centralizado)
         g2.setColor(playerColor);
-        g2.fillRoundRect((int) playerX, (int) playerY, playerSize, playerSize, 8, 8);
+        g2.fillRoundRect((int) (playerX - camX), (int) (playerY - camY), playerSize, playerSize, 8, 8);
 
         // Undo translate
         g2.translate(camX, camY);

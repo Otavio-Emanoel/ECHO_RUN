@@ -1,5 +1,9 @@
 package com.echorun.game;
 
+import com.echorun.map.DungeonGenerator;
+import com.echorun.map.DungeonMap;
+import com.echorun.map.Tile;
+
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.ActionEvent;
@@ -12,16 +16,24 @@ public class GamePanel extends JPanel implements Runnable {
     private Thread loopThread;
     private volatile boolean running = false;
 
-    // Mundo simples
+    // Mundo / mapa
+    private DungeonMap map;
+    private final int tileSize = 24;
+
+    // Jogador
     private double playerX = 100;
     private double playerY = 100;
     private double velX = 0;
     private double velY = 0;
-    private int playerSize = 32;
+    private int playerSize = 18;
     private int hp;
 
-    private final Color bgColor = new Color(18, 18, 22);
-    private final Color playerColor = new Color(80, 200, 120);
+    // Câmera
+    private double camX = 0;
+    private double camY = 0;
+
+    private final Color bgColor = new Color(12, 12, 16);
+    private final Color playerColor = new Color(80, 200, 160);
 
     public GamePanel(PlayerClass playerClass, Runnable onExitToMenu) {
         this.playerClass = playerClass;
@@ -32,6 +44,8 @@ public class GamePanel extends JPanel implements Runnable {
         setBackground(bgColor);
         setDoubleBuffered(true);
 
+        generateMap();
+        spawnPlayer();
         setupKeyBindings();
     }
 
@@ -115,16 +129,72 @@ public class GamePanel extends JPanel implements Runnable {
     }
 
     private void updateGame() {
-        playerX += velX;
-        playerY += velY;
+        // Movimento com colisão por tiles (separado por eixo)
+        double nextX = playerX + velX;
+        if (!collides(nextX, playerY)) playerX = nextX;
 
-        // Limites da tela
-        int w = getWidth();
-        int h = getHeight();
-        if (playerX < 0) playerX = 0;
-        if (playerY < 0) playerY = 0;
-        if (playerX > w - playerSize) playerX = w - playerSize;
-        if (playerY > h - playerSize) playerY = h - playerSize;
+        double nextY = playerY + velY;
+        if (!collides(playerX, nextY)) playerY = nextY;
+
+        // Atualiza câmera para centralizar no jogador
+        camX = playerX - getWidth() / 2.0 + playerSize / 2.0;
+        camY = playerY - getHeight() / 2.0 + playerSize / 2.0;
+
+        // Limitar câmera aos limites do mapa
+        int worldW = map.getWidth() * tileSize;
+        int worldH = map.getHeight() * tileSize;
+        camX = Math.max(0, Math.min(worldW - getWidth(), camX));
+        camY = Math.max(0, Math.min(worldH - getHeight(), camY));
+    }
+
+    private boolean collides(double x, double y) {
+        int left = (int)Math.floor(x / tileSize);
+        int right = (int)Math.floor((x + playerSize - 1) / tileSize);
+        int top = (int)Math.floor(y / tileSize);
+        int bottom = (int)Math.floor((y + playerSize - 1) / tileSize);
+
+        for (int ty = top; ty <= bottom; ty++) {
+            for (int tx = left; tx <= right; tx++) {
+                if (tx < 0 || ty < 0 || tx >= map.getWidth() || ty >= map.getHeight()) return true;
+                Tile t = map.get(tx, ty);
+                if (t == Tile.WALL) return true;
+            }
+        }
+        return false;
+    }
+
+    private void generateMap() {
+        int tilesWide = 100;
+        int tilesHigh = 70;
+        long seed = System.currentTimeMillis();
+        DungeonGenerator gen = new DungeonGenerator(tilesWide, tilesHigh, tileSize, seed);
+        map = gen.generate();
+    }
+
+    private void spawnPlayer() {
+        // Busca uma célula piso aproximada do centro
+        int cx = map.getWidth() / 2;
+        int cy = map.getHeight() / 2;
+        int radius = Math.max(map.getWidth(), map.getHeight());
+        boolean found = false;
+        outer: for (int r = 0; r < radius; r++) {
+            for (int dy = -r; dy <= r; dy++) {
+                for (int dx = -r; dx <= r; dx++) {
+                    int tx = cx + dx; int ty = cy + dy;
+                    if (tx < 0 || ty < 0 || tx >= map.getWidth() || ty >= map.getHeight()) continue;
+                    if (map.get(tx, ty) == Tile.FLOOR) {
+                        playerX = tx * tileSize + (tileSize - playerSize) / 2.0;
+                        playerY = ty * tileSize + (tileSize - playerSize) / 2.0;
+                        found = true;
+                        break outer;
+                    }
+                }
+            }
+        }
+        if (!found) {
+            playerX = 2 * tileSize;
+            playerY = 2 * tileSize;
+        }
     }
 
     @Override
@@ -137,13 +207,18 @@ public class GamePanel extends JPanel implements Runnable {
         g2.setColor(getBackground());
         g2.fillRect(0, 0, getWidth(), getHeight());
 
-        // Chão simples
-        g2.setColor(new Color(40, 40, 48));
-        g2.fillRect(0, getHeight() - 80, getWidth(), 80);
+        // Translate pela câmera
+        g2.translate(-camX, -camY);
+
+        // Render mapa com variações de cor e bordas
+        drawMap(g2);
 
         // Jogador
         g2.setColor(playerColor);
-        g2.fillRoundRect((int) playerX, (int) playerY, playerSize, playerSize, 10, 10);
+        g2.fillRoundRect((int) playerX, (int) playerY, playerSize, playerSize, 8, 8);
+
+        // Undo translate
+        g2.translate(camX, camY);
 
         // HUD
         g2.setColor(new Color(230, 230, 235));
@@ -152,6 +227,81 @@ public class GamePanel extends JPanel implements Runnable {
                 playerClass.getDisplayName(), hp, playerClass.getMoveSpeed(), playerClass.getAttackDamage());
         g2.drawString(hud, 12, 20);
 
+        // Vinheta sutil
+        drawVignette(g2);
+
         g2.dispose();
+    }
+
+    private void drawMap(Graphics2D g2) {
+        int w = map.getWidth();
+        int h = map.getHeight();
+        Color wall = new Color(45, 49, 66);
+        Color wallShadow = new Color(25, 28, 38);
+        Color floorBase = new Color(62, 68, 89);
+        Color floorAlt = new Color(66, 72, 95);
+        Color doorColor = new Color(120, 98, 70);
+
+        for (int ty = 0; ty < h; ty++) {
+            for (int tx = 0; tx < w; tx++) {
+                Tile t = map.get(tx, ty);
+                int px = tx * tileSize;
+                int py = ty * tileSize;
+
+                switch (t) {
+                    case FLOOR: {
+                        float r = map.random01(tx, ty);
+                        Color c = mix(floorBase, floorAlt, r * 0.5f);
+                        g2.setColor(c);
+                        g2.fillRect(px, py, tileSize, tileSize);
+
+                        // detalhes de pedras
+                        g2.setColor(new Color(50, 55, 72));
+                        if (r > 0.85f) g2.fillRect(px + 4, py + 6, 2, 2);
+                        if (r < 0.15f) g2.fillRect(px + 12, py + 12, 2, 2);
+                        break;
+                    }
+                    case WALL: {
+                        g2.setColor(wall);
+                        g2.fillRect(px, py, tileSize, tileSize);
+                        // Top highlight se acima for piso
+                        if (ty + 1 < h && map.get(tx, ty + 1) == Tile.FLOOR) {
+                            g2.setColor(wallShadow);
+                            g2.fillRect(px, py + tileSize - 5, tileSize, 5);
+                        }
+                        break;
+                    }
+                    case DOOR: {
+                        g2.setColor(doorColor);
+                        g2.fillRect(px, py, tileSize, tileSize);
+                        g2.setColor(doorColor.darker());
+                        g2.fillRect(px + 2, py + 2, tileSize - 4, tileSize - 4);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    private Color mix(Color a, Color b, float t) {
+        t = Math.max(0, Math.min(1, t));
+        int r = (int)(a.getRed() * (1 - t) + b.getRed() * t);
+        int g = (int)(a.getGreen() * (1 - t) + b.getGreen() * t);
+        int bl = (int)(a.getBlue() * (1 - t) + b.getBlue() * t);
+        return new Color(r, g, bl);
+    }
+
+    private void drawVignette(Graphics2D g2) {
+        int w = getWidth();
+        int h = getHeight();
+        Paint old = g2.getPaint();
+        RadialGradientPaint rg = new RadialGradientPaint(
+                new Point(w/2, h/2), Math.max(w, h) * 0.7f,
+                new float[]{0f, 1f},
+                new Color[]{new Color(0,0,0,0), new Color(0, 0, 0, 110)}
+        );
+        g2.setPaint(rg);
+        g2.fillRect(0, 0, w, h);
+        g2.setPaint(old);
     }
 }
